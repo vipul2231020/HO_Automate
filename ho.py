@@ -107,9 +107,9 @@ def add_images_to_sheet(ws, uploaded_files, start_row=2, start_col="B", max_widt
 
 # ---------- GENERATION ----------
 if submitted:
-    d = shift_date.strftime("%d%b%Y")
-    shift_short = {"Morning": "MOR", "Evening": "EVE", "Night": "NIG"}[shift]
-    fname = f"ECA HO sheet {d}_{shift_short}-shift{engineer}.xlsx"
+    d = shift_date.strftime("%d_%b_%Y")
+    shift_short = {"Morning": "Morning", "Evening": "Evening", "Night": "Night"}[shift]
+    fname = f"ECA HO sheet {d}_{shift_short}_shift-{engineer}.xlsx"
     out_path = os.path.join(OUTPUT_DIR, fname)
 
     shutil.copy(TEMPLATE, out_path)
