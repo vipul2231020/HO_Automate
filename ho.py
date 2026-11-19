@@ -2,7 +2,6 @@ import streamlit as st
 import openpyxl
 from openpyxl.styles import Font, Alignment
 from openpyxl.drawing.image import Image as XLImage
-import shutil
 import os
 from datetime import date
 from PIL import Image as PILImage
@@ -16,14 +15,13 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(BASE_DIR, "HO_template.xlsx")
 
 TMP_DIR = os.path.join(BASE_DIR, "tmp_images")
-
 os.makedirs(TMP_DIR, exist_ok=True)
 
 if not os.path.exists(TEMPLATE):
     st.error(f"Template nahi mila: {TEMPLATE}\nApni Excel ko 'HO_template.xlsx' naam de kar is folder me rakho:\n{BASE_DIR}")
     st.stop()
 
-# ---- INC snip ki starting row (yahan se change kar sakta hai) ----
+# ---- INC snip ki starting row ----
 INC_START_ROW = 24
 
 # ---------- FORM ----------
@@ -79,39 +77,57 @@ with st.form("ho_form"):
 
     submitted = st.form_submit_button("Generate HO Sheet")
 
-# ---------- HELPER: image daalna ----------
-
-def add_images_to_sheet(ws, uploaded_files, start_row=2, start_col="B", max_width=800, prefix=""):
-    """Images ko memory mein process karke vertically stack karta hai."""
+# ---------- HELPER: image daalna (FULL QUALITY) ----------
+def add_images_to_sheet(ws, uploaded_files, start_row=2, start_col="A",
+                         display_width=700, prefix=""):
+    """Image full pixels (original quality) me daalti hai.
+    Sirf Excel me DISPLAY size chhoti hoti hai, quality kam nahi hoti."""
     anchor_row = start_row
 
-    for idx, up in enumerate(uploaded_files):
-        img_bytes = up.getvalue()
-        pil = PILImage.open(io.BytesIO(img_bytes))
+    if not uploaded_files:
+        return anchor_row
 
-        w, h = pil.size
+    for up in uploaded_files:
+        try:
+            img_bytes = up.getvalue()
+            pil = PILImage.open(io.BytesIO(img_bytes))
 
-        if w > max_width:
-            ratio = max_width / w
-            pil = pil.resize((int(w * ratio), int(h * ratio)))
+            # Transparency fix (PNG/palette)
+            if pil.mode in ("RGBA", "P"):
+                bg = PILImage.new("RGB", pil.size, (255, 255, 255))
+                if pil.mode == "RGBA":
+                    bg.paste(pil, mask=pil.split()[3])
+                else:
+                    bg.paste(pil.convert("RGBA"))
+                pil = bg
+
+            # Full pixels rakho - koi resize NAHI
             w, h = pil.size
 
-        if pil.mode in ("RGBA", "P"):
-            pil = pil.convert("RGB")
+            buf = io.BytesIO()
+            pil.save(buf, format="PNG")  # lossless, poora pixel data
+            buf.seek(0)
 
-        image_buffer = io.BytesIO()
-        pil.save(image_buffer, format="PNG")
-        image_buffer.seek(0)
+            xl_img = XLImage(buf)
 
-        xl_img = XLImage(image_buffer)
-        ws.add_image(xl_img, f"{start_col}{anchor_row}")
+            # Sirf DISPLAY size chhota, aspect ratio maintain
+            if w > display_width:
+                scale = display_width / w
+                xl_img.width = display_width
+                xl_img.height = int(h * scale)
+            else:
+                xl_img.width = w
+                xl_img.height = h
 
-        anchor_row += int(h / 18) + 3
+            ws.add_image(xl_img, f"{start_col}{anchor_row}")
+
+            # Row advance - display height ke hisaab se
+            anchor_row += int(xl_img.height / 18) + 3
+
+        except Exception as e:
+            st.error(f"[{prefix}] ERROR: {e}")
 
     return anchor_row
-
-
-# ---------- GENERATION ----------
 
 # ---------- GENERATION ----------
 if submitted:
@@ -120,7 +136,6 @@ if submitted:
 
     fname = f"ECA HO sheet {d}_{shift_short}_shift-{engineer}.xlsx"
 
-    # Template directly load karo
     wb = openpyxl.load_workbook(TEMPLATE)
     ws = wb["HO"]
 
@@ -151,7 +166,7 @@ if submitted:
     if inc_imgs:
         next_row = add_images_to_sheet(
             ws, inc_imgs, start_row=INC_START_ROW,
-            start_col="A", prefix="inc"
+            start_col="A", display_width=1400, prefix="inc"
         )
 
     # ----- Incident Console -----
@@ -159,7 +174,7 @@ if submitted:
         set_cell(f"A{next_row}", "Incident Console:")
         next_row = add_images_to_sheet(
             ws, console_imgs, start_row=next_row + 1,
-            start_col="A", prefix="console"
+            start_col="A", display_width=1400, prefix="console"
         )
 
     # ----- WO -----
@@ -167,7 +182,7 @@ if submitted:
         set_cell(f"A{next_row}", "WO:")
         next_row = add_images_to_sheet(
             ws, wo_imgs, start_row=next_row + 1,
-            start_col="A", prefix="wo"
+            start_col="A", display_width=1400, prefix="wo"
         )
 
     # ----- Supervision Alarm -----
@@ -175,7 +190,7 @@ if submitted:
         ws_sup = wb["Supervision Alarm"]
         add_images_to_sheet(
             ws_sup, sup_imgs, start_row=2,
-            start_col="B", prefix="sup"
+            start_col="B", display_width=1400, prefix="sup"
         )
 
     # ----- CRQ -----
@@ -183,12 +198,11 @@ if submitted:
         crq_name = next(
             (s for s in wb.sheetnames if s.strip() == "CRQ"), None
         )
-
         if crq_name:
             ws_crq = wb[crq_name]
             add_images_to_sheet(
                 ws_crq, crq_imgs, start_row=2,
-                start_col="B", prefix="crq"
+                start_col="B", display_width=700, prefix="crq"
             )
 
     # ----- Excel memory mein generate karo -----
